@@ -1,33 +1,49 @@
+
 name: Coleta de noticias de atletas
 
 on:
   schedule:
-    - cron: "0 */3 * * *"   # a cada 3 horas (horário UTC)
-  workflow_dispatch:         # permite rodar manualmente pelo botão "Run workflow"
+    - cron: "0 */8 * * *"
+  workflow_dispatch:
 
 permissions:
-  contents: write            # necessário para salvar o noticias.csv no repositório
+  contents: write
+
+concurrency:
+  group: coleta-noticias
+  cancel-in-progress: false
 
 jobs:
   coletar:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - run: pip install feedparser requests beautifulsoup4 gspread google-auth
+
       - run: python scraper.py
         env:
-          # Modo Google Sheets: crie estes segredos. Modo CSV: deixe sem criar (ficam vazios).
           SHEET_ID: ${{ secrets.SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           LOOKBACK_DAYS: "2"
+
       - name: Salvar noticias.csv (modo CSV)
         run: |
           if [ -f noticias.csv ]; then
             git config user.name "github-actions"
             git config user.email "github-actions@users.noreply.github.com"
             git add noticias.csv
-            git diff --cached --quiet || (git commit -m "Atualiza noticias" && git push)
+
+            if ! git diff --cached --quiet; then
+              git commit -m "Atualiza noticias"
+              git pull --rebase origin main
+              git push origin main
+            fi
           fi
