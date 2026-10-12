@@ -80,9 +80,9 @@ MODALIDADES = {
     "Esgrima": ["esgrima", "esgrimista"],
     "Remo": ["remo", "remador", "remadora"],
     "Canoagem": ["canoagem", "canoista", "slalom"],
-    "Ciclismo": ["ciclismo", "ciclista", "bmx", "mountain bike", "ciclismo de pista"],
-    "Tênis": ["tenis", "tenista", "atp", "wta", "roland garros", "wimbledon"],
-    "Tênis de mesa": ["tenis de mesa"],
+    "Ciclismo": ["ciclismo", "ciclista", "bmx", "mountain bike", "ciclismo de pista", "ciclismo de estrada", "uci"],
+    "Tênis": ["tenis", "tenista", "atp", "wta", "roland garros", "wimbledon", "aberto"],
+    "Tênis de mesa": ["tenis de mesa", "smash", "wtt"],
     "Badminton": ["badminton"],
     "Levantamento de peso": ["levantamento de peso", "halterofilismo", "halterofilista"],
     "Hipismo": ["hipismo", "adestramento", "concurso completo"],
@@ -354,34 +354,47 @@ def gravar_csv(existentes: list, novas: list):
         csv.writer(f).writerows([CABECALHO] + novas + existentes[1:])  # mais novas no topo
 
 
+def manter_apenas_data(rows: list, data_consulta: str) -> list:
+    """Mantém somente linhas cuja coluna 'Data do fato' seja a data da consulta."""
+    if not rows:
+        return [CABECALHO]
+    cabecalho = rows[0]
+    do_dia = [linha for linha in rows[1:] if linha and linha[0].strip() == data_consulta]
+    return [cabecalho] + do_dia
+
+
 # --------------------------------------------------------------------------
 # PRINCIPAL
 # --------------------------------------------------------------------------
 def main():
+    # Data local da execução do workflow (fuso de São Paulo).
+    agora = datetime.now(TZ)
+    data_consulta = agora.strftime("%d/%m/%Y")
+    data_consulta_date = agora.date()
     aba = None
     if SHEET_ID:
         planilha = conectar_planilha()
         aba = obter_aba(planilha, ABA_NOTICIAS)
         atletas = carregar_atletas(planilha)
-        existentes = aba.get_all_values()
-        if not existentes:
-            aba.append_row(CABECALHO)
-            existentes = [CABECALHO]
+        existentes = aba.get_all_values() or [CABECALHO]
     else:
         atletas = carregar_atletas_csv()
         existentes = ler_csv() or [CABECALHO]
+
+    # Remove registros de execuções anteriores: a planilha/CSV fica restrita à data de hoje.
+    existentes = manter_apenas_data(existentes, data_consulta)
 
     links_vistos = {l[6] for l in existentes[1:] if len(l) > 6}
     titulos_vistos = {norm(l[4]) for l in existentes[1:] if len(l) > 4}
     eventos_vistos = {(l[0], norm(l[1]), l[2]) for l in existentes[1:] if len(l) > 2 and l[1]}
 
-    limite = datetime.now(TZ) - timedelta(days=LOOKBACK_DAYS)
     bruto = coletar_google_news() + coletar_html()
     print(f"Itens coletados (bruto): {len(bruto)}")
 
     novas = []
     for it in bruto:
-        if it["data"] < limite or it["link"] in links_vistos:
+        # Aceita somente notícias publicadas na data local em que o workflow executou.
+        if it["data"].astimezone(TZ).date() != data_consulta_date or it["link"] in links_vistos:
             continue
         titulo_norm = norm(it["titulo"])
         if titulo_norm in titulos_vistos:
@@ -395,7 +408,7 @@ def main():
         if not relevante or not modalidade:
             continue
 
-        data_fmt = it["data"].strftime("%d/%m/%Y")
+        data_fmt = data_consulta
         chave_evento = (data_fmt, norm(atleta), competicao)
         if atleta and chave_evento in eventos_vistos:
             continue
@@ -411,8 +424,10 @@ def main():
 
     novas.sort(key=lambda r: (r[0][-4:], r[0][3:5], r[0][:2], r[7]), reverse=True)
     if aba is not None:
-        if novas:
-            aba.append_rows(novas, value_input_option="USER_ENTERED")
+        # Regrava a aba para excluir notícias de datas anteriores e manter apenas as de hoje.
+        linhas_finais = [CABECALHO] + novas + existentes[1:]
+        aba.clear()
+        aba.update(linhas_finais, value_input_option="USER_ENTERED")
     else:
         gravar_csv(existentes, novas)
     print(f"Novas linhas adicionadas: {len(novas)}")
