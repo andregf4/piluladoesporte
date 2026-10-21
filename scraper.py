@@ -354,13 +354,20 @@ def gravar_csv(existentes: list, novas: list):
         csv.writer(f).writerows([CABECALHO] + novas + existentes[1:])  # mais novas no topo
 
 
-def manter_apenas_data(rows: list, data_consulta: str) -> list:
-    """Mantém somente linhas cuja coluna 'Data do fato' seja a data da consulta."""
+def manter_apenas_datas(rows: list, datas_validas: set) -> list:
+    """Mantém somente linhas cuja coluna 'Data do fato' esteja entre as datas válidas."""
     if not rows:
         return [CABECALHO]
+
     cabecalho = rows[0]
-    do_dia = [linha for linha in rows[1:] if linha and linha[0].strip() == data_consulta]
-    return [cabecalho] + do_dia
+
+    filtradas = [
+        linha
+        for linha in rows[1:]
+        if linha and linha[0].strip() in datas_validas
+    ]
+
+    return [cabecalho] + filtradas
 
 
 # --------------------------------------------------------------------------
@@ -369,8 +376,14 @@ def manter_apenas_data(rows: list, data_consulta: str) -> list:
 def main():
     # Data local da execução do workflow (fuso de São Paulo).
     agora = datetime.now(TZ)
-    data_consulta = agora.strftime("%d/%m/%Y")
+
     data_consulta_date = agora.date()
+    data_anterior_date = data_consulta_date - timedelta(days=1)
+
+    data_consulta = data_consulta_date.strftime("%d/%m/%Y")
+    data_anterior = data_anterior_date.strftime("%d/%m/%Y")
+
+    datas_validas = {data_consulta, data_anterior}
     aba = None
     if SHEET_ID:
         planilha = conectar_planilha()
@@ -381,8 +394,9 @@ def main():
         atletas = carregar_atletas_csv()
         existentes = ler_csv() or [CABECALHO]
 
-    # Remove registros de execuções anteriores: a planilha/CSV fica restrita à data de hoje.
-    existentes = manter_apenas_data(existentes, data_consulta)
+    # Remove registros anteriores a ontem.
+    # O CSV/planilha mantém somente notícias de hoje e de ontem.
+    existentes = manter_apenas_datas(existentes, datas_validas)
 
     links_vistos = {l[6] for l in existentes[1:] if len(l) > 6}
     titulos_vistos = {norm(l[4]) for l in existentes[1:] if len(l) > 4}
@@ -393,8 +407,11 @@ def main():
 
     novas = []
     for it in bruto:
-        # Aceita somente notícias publicadas na data local em que o workflow executou.
-        if it["data"].astimezone(TZ).date() != data_consulta_date or it["link"] in links_vistos:
+        # Aceita somente notícias publicadas hoje ou ontem,
+        # considerando o fuso horário de São Paulo.
+        data_noticia = it["data"].astimezone(TZ).date()
+
+        if data_noticia not in {data_consulta_date, data_anterior_date} or it["link"] in links_vistos:
             continue
         titulo_norm = norm(it["titulo"])
         if titulo_norm in titulos_vistos:
@@ -408,7 +425,7 @@ def main():
         if not relevante or not modalidade:
             continue
 
-        data_fmt = data_consulta
+        data_fmt = data_noticia.strftime("%d/%m/%Y")
         chave_evento = (data_fmt, norm(atleta), competicao)
         if atleta and chave_evento in eventos_vistos:
             continue
