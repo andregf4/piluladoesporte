@@ -1,17 +1,12 @@
-
 name: Coleta de noticias de atletas
 
 on:
   schedule:
-    - cron: "0 */8 * * *"
-  workflow_dispatch:
+    - cron: "0 23 * * *"      # 1x por dia - 06:00 no horário de São Paulo
+  workflow_dispatch:         # permite rodar manualmente pelo botão "Run workflow"
 
 permissions:
-  contents: write
-
-concurrency:
-  group: coleta-noticias
-  cancel-in-progress: false
+  contents: write            # necessário para salvar o noticias.csv no repositório
 
 jobs:
   coletar:
@@ -19,14 +14,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      - run: pip install feedparser requests beautifulsoup4 gspread google-auth
+      - run: pip install -r requirements.txt
 
       - run: python scraper.py
         env:
@@ -40,10 +34,5 @@ jobs:
             git config user.name "github-actions"
             git config user.email "github-actions@users.noreply.github.com"
             git add noticias.csv
-
-            if ! git diff --cached --quiet; then
-              git commit -m "Atualiza noticias"
-              git pull --rebase origin main
-              git push origin main
-            fi
+            git diff --cached --quiet || (git commit -m "Atualiza noticias" && git push)
           fi
